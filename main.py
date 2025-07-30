@@ -180,16 +180,16 @@ class AIChat:
             return self.chat_with_simple_ai(message)
         elif self.ai_type == "ollama":
             response = self.chat_with_ollama(message)
-            # 如果Ollama连接失败，回退到简单AI
-            if response is None:
-                print("🔄 Ollama连接失败，使用简单AI回复...")
+            # 如果Ollama连接失败或出现错误，回退到简单AI
+            if response is None or "错误" in response or "失败" in response or "无法连接" in response:
+                print("🔄 Ollama服务不可用，使用简单AI回复...")
                 return self.chat_with_simple_ai(message)
             return response
         elif self.ai_type == "openai":
             response = self.chat_with_openai(message)
             # 如果OpenAI失败，回退到简单AI
-            if "错误" in response or "失败" in response:
-                print("🔄 OpenAI连接失败，使用简单AI回复...")
+            if response is None or "错误" in response or "失败" in response or "请设置" in response:
+                print("🔄 OpenAI服务不可用，使用简单AI回复...")
                 return self.chat_with_simple_ai(message)
             return response
         else:

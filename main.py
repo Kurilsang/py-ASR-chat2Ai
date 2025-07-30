@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-中文语音识别+AI对话演示程序
-使用speech_recognition库实现ASR，结合AI对话功能
+中文语音识别+AI对话+TTS语音合成演示程序
+使用speech_recognition库实现ASR，结合AI对话功能和TTS语音合成
 """
 
 import speech_recognition as sr
@@ -12,7 +12,193 @@ import requests
 import json
 import os
 import random
+import pyttsx3
+import threading
 from typing import Optional
+
+
+class TTSEngine:
+    """文本转语音引擎类"""
+    
+    def __init__(self, tts_type="pyttsx3"):
+        """
+        初始化TTS引擎
+        
+        Args:
+            tts_type: TTS类型，支持 "pyttsx3", "gtts", "azure"
+        """
+        self.tts_type = tts_type
+        self.engine = None
+        
+        if tts_type == "pyttsx3":
+            self.init_pyttsx3()
+    
+    def init_pyttsx3(self):
+        """初始化pyttsx3引擎"""
+        try:
+            self.engine = pyttsx3.init()
+            
+            # 设置语音参数
+            voices = self.engine.getProperty('voices')
+            
+            # 尝试选择中文语音
+            for voice in voices:
+                if 'chinese' in voice.name.lower() or 'zh' in voice.id.lower():
+                    self.engine.setProperty('voice', voice.id)
+                    break
+            
+            # 设置语速和音量
+            self.engine.setProperty('rate', 200)    # 语速
+            self.engine.setProperty('volume', 0.8)  # 音量
+            
+            print("✅ pyttsx3 TTS引擎初始化成功")
+            
+        except Exception as e:
+            print(f"❌ pyttsx3初始化失败：{e}")
+            self.engine = None
+    
+    def speak_with_pyttsx3(self, text: str):
+        """使用pyttsx3进行语音合成"""
+        if not self.engine:
+            print("❌ TTS引擎未初始化")
+            return False
+        
+        try:
+            print(f"🔊 正在播放语音：{text[:20]}...")
+            self.engine.say(text)
+            self.engine.runAndWait()
+            return True
+        except Exception as e:
+            print(f"❌ TTS播放失败：{e}")
+            return False
+    
+    def speak_with_gtts(self, text: str):
+        """使用Google TTS进行语音合成"""
+        try:
+            from gtts import gTTS
+            import pygame
+            import io
+            
+            print(f"🌐 正在使用Google TTS生成语音...")
+            
+            # 生成语音
+            tts = gTTS(text=text, lang='zh-cn', slow=False)
+            
+            # 保存到内存
+            audio_buffer = io.BytesIO()
+            tts.write_to_fp(audio_buffer)
+            audio_buffer.seek(0)
+            
+            # 播放音频
+            pygame.mixer.init()
+            pygame.mixer.music.load(audio_buffer)
+            pygame.mixer.music.play()
+            
+            # 等待播放完成
+            while pygame.mixer.music.get_busy():
+                time.sleep(0.1)
+            
+            print("✅ Google TTS播放完成")
+            return True
+            
+        except ImportError:
+            print("❌ 缺少gtts或pygame库，请安装：pip install gtts pygame")
+            return False
+        except Exception as e:
+            print(f"❌ Google TTS失败：{e}")
+            return False
+    
+    def speak_with_azure(self, text: str):
+        """使用Azure TTS进行语音合成"""
+        try:
+            import azure.cognitiveservices.speech as speechsdk
+            
+            # 需要Azure订阅密钥
+            speech_key = os.getenv('AZURE_SPEECH_KEY')
+            service_region = os.getenv('AZURE_SPEECH_REGION', 'eastus')
+            
+            if not speech_key:
+                print("❌ 请设置AZURE_SPEECH_KEY环境变量")
+                return False
+            
+            # 配置语音服务
+            speech_config = speechsdk.SpeechConfig(
+                subscription=speech_key, 
+                region=service_region
+            )
+            speech_config.speech_synthesis_voice_name = "zh-CN-XiaoxiaoNeural"
+            
+            # 创建合成器
+            synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
+            
+            print(f"🌐 正在使用Azure TTS生成语音...")
+            
+            # 合成语音
+            result = synthesizer.speak_text_async(text).get()
+            
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                print("✅ Azure TTS播放完成")
+                return True
+            else:
+                print(f"❌ Azure TTS失败：{result.reason}")
+                return False
+                
+        except ImportError:
+            print("❌ 缺少azure-cognitiveservices-speech库")
+            return False
+        except Exception as e:
+            print(f"❌ Azure TTS失败：{e}")
+            return False
+    
+    def speak(self, text: str, async_play: bool = True):
+        """
+        文本转语音播放
+        
+        Args:
+            text: 要合成的文本
+            async_play: 是否异步播放
+        """
+        if not text or not text.strip():
+            return False
+        
+        def _speak():
+            success = False
+            
+            if self.tts_type == "pyttsx3":
+                success = self.speak_with_pyttsx3(text)
+            elif self.tts_type == "gtts":
+                success = self.speak_with_gtts(text)
+            elif self.tts_type == "azure":
+                success = self.speak_with_azure(text)
+            
+            if not success:
+                print("🔄 TTS失败，尝试使用pyttsx3备选方案...")
+                # 如果当前不是pyttsx3，尝试初始化并使用pyttsx3
+                if self.tts_type != "pyttsx3":
+                    # 重新初始化pyttsx3作为备选
+                    try:
+                        if not self.engine:
+                            print("🔧 正在初始化pyttsx3备选引擎...")
+                            self.init_pyttsx3()
+                        if self.engine:
+                            self.speak_with_pyttsx3(text)
+                        else:
+                            print("❌ 备选pyttsx3引擎初始化失败")
+                    except Exception as e:
+                        print(f"❌ 备选TTS方案失败：{e}")
+                else:
+                    print("❌ pyttsx3引擎不可用")
+        
+        if async_play:
+            # 异步播放，不阻塞程序
+            thread = threading.Thread(target=_speak)
+            thread.daemon = True
+            thread.start()
+            return True
+        else:
+            # 同步播放
+            _speak()
+            return True
 
 
 class AIChat:
@@ -37,18 +223,23 @@ class AIChat:
                 "嗨！今天心情怎么样？"
             ],
             "时间": [
-                f"现在是{time.strftime('%Y年%m月%d日 %H:%M:%S')}",
+                f"现在是{time.strftime('%Y年%m月%d日 %H点%M分')}",
                 "时间过得真快呢！",
-                "让我看看现在几点了..."
+                "让我看看现在几点了"
             ],
             "天气": [
                 "今天天气还不错呢！",
                 "我是AI，看不到窗外的天气，但希望今天是个好天气！",
-                "无论什么天气，保持好心情最重要！"
+                "不论什么天气，保持好心情最重要！"
+            ],
+            "告别": [
+                "再见！期待下次和你聊天！",
+                "拜拜！祝你今天愉快！",
+                "下次见！保重身体哦！"
             ],
             "默认": [
                 "这是个很有趣的问题！",
-                "我理解你的意思，让我想想...",
+                "我理解你的意思，让我想想",
                 "谢谢你跟我分享这个！",
                 "你说得很有道理！",
                 "这让我学到了新东西！",
@@ -72,6 +263,11 @@ class AIChat:
         greetings = ["你好", "您好", "hi", "hello", "嗨", "早上好", "下午好", "晚上好"]
         if any(greeting in message_lower for greeting in greetings):
             return random.choice(self.simple_responses["问候"])
+        
+        # 告别词检测
+        farewells = ["再见", "拜拜", "回头见", "告别", "bye", "goodbye"]
+        if any(farewell in message_lower for farewell in farewells):
+            return random.choice(self.simple_responses["告别"])
         
         # 时间相关
         time_words = ["时间", "几点", "现在", "日期", "今天"]
@@ -196,15 +392,23 @@ class AIChat:
             return "不支持的AI类型"
 
 
-class ChineseASRWithAI:
-    """中文语音识别+AI对话类"""
+class ChineseASRWithAIAndTTS:
+    """中文语音识别+AI对话+TTS语音合成类"""
     
-    def __init__(self, ai_type="simple"):
-        """初始化语音识别器和AI对话"""
+    def __init__(self, ai_type="simple", tts_type="pyttsx3", enable_tts=True):
+        """初始化语音识别器、AI对话和TTS"""
         print("🎤 初始化语音识别系统...")
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
         self.ai_chat = AIChat(ai_type)
+        self.enable_tts = enable_tts
+        
+        # 初始化TTS
+        if enable_tts:
+            print("🔊 初始化TTS语音合成...")
+            self.tts_engine = TTSEngine(tts_type)
+        else:
+            self.tts_engine = None
         
         # 调整环境噪音
         print("🔧 正在调整环境噪音，请保持安静...")
@@ -278,9 +482,9 @@ class ChineseASRWithAI:
             return None
     
     def run_conversation(self):
-        """运行语音识别+AI对话"""
+        """运行语音识别+AI对话+TTS"""
         print("\n" + "="*60)
-        print("🗣️ 开始语音识别+AI对话")
+        print("🗣️ 开始语音识别+AI对话+TTS合成")
         print("="*60)
         
         # 步骤1：录制音频
@@ -301,6 +505,11 @@ class ChineseASRWithAI:
         
         # 步骤5：显示AI回复
         print(f"🤖 AI回复：{ai_response}")
+        
+        # 步骤6：TTS语音合成播放
+        if self.enable_tts and self.tts_engine:
+            self.tts_engine.speak(ai_response, async_play=True)
+        
         print("="*60)
         
         return True
@@ -315,8 +524,8 @@ class ChineseASRWithAI:
                 success = self.run_conversation()
                 
                 if success:
-                    # 检查是否要退出
-                    time.sleep(1)  # 短暂暂停
+                    # 短暂暂停，等待TTS播放
+                    time.sleep(2)
                     
                 # 询问是否继续
                 choice = input("\n⏭️ 按Enter继续对话，输入'quit'退出：").strip().lower()
@@ -331,17 +540,36 @@ class ChineseASRWithAI:
 
 def check_dependencies():
     """检查依赖包是否安装"""
+    missing_packages = []
+    
     try:
         import speech_recognition
+    except ImportError:
+        missing_packages.append("SpeechRecognition")
+    
+    try:
         import pyaudio
+    except ImportError:
+        missing_packages.append("pyaudio")
+        
+    try:
         import requests
+    except ImportError:
+        missing_packages.append("requests")
+        
+    try:
+        import pyttsx3
+    except ImportError:
+        missing_packages.append("pyttsx3")
+    
+    if missing_packages:
+        print(f"❌ 缺少依赖包：{', '.join(missing_packages)}")
+        print("\n📦 请安装依赖包：")
+        print(f"pip install {' '.join(missing_packages)}")
+        return False
+    else:
         print("✅ 基本依赖包检查通过")
         return True
-    except ImportError as e:
-        print(f"❌ 缺少依赖包：{e}")
-        print("\n📦 请安装以下依赖包：")
-        print("pip install SpeechRecognition pyaudio requests")
-        return False
 
 
 def setup_ai_service():
@@ -376,9 +604,38 @@ def setup_ai_service():
         return "simple"
 
 
+def setup_tts_service():
+    """设置TTS服务"""
+    print("\n🔊 选择TTS语音合成服务：")
+    print("1. pyttsx3 (Windows内置，免费)")
+    print("2. Google TTS (在线，免费但需网络)")
+    print("3. Azure TTS (高质量，需要API Key)")
+    print("4. 关闭TTS (仅文字回复)")
+    
+    choice = input("请选择（1、2、3或4）：").strip()
+    
+    if choice == '1':
+        print("\n💡 使用pyttsx3：Windows内置TTS")
+        return "pyttsx3", True
+    elif choice == '2':
+        print("\n💡 使用Google TTS：需要安装gtts和pygame")
+        print("pip install gtts pygame")
+        return "gtts", True
+    elif choice == '3':
+        print("\n💡 使用Azure TTS：需要设置AZURE_SPEECH_KEY")
+        print("pip install azure-cognitiveservices-speech")
+        return "azure", True
+    elif choice == '4':
+        print("\n💡 TTS已关闭，仅显示文字回复")
+        return "none", False
+    else:
+        print("❌ 无效选择，默认使用pyttsx3")
+        return "pyttsx3", True
+
+
 def main():
     """主函数"""
-    print("🎙️ 中文语音识别+AI对话演示程序")
+    print("🎙️ 中文语音识别+AI对话+TTS合成演示程序")
     print("="*60)
     
     # 检查依赖
@@ -388,9 +645,12 @@ def main():
     # 选择AI服务
     ai_type = setup_ai_service()
     
+    # 选择TTS服务
+    tts_type, enable_tts = setup_tts_service()
+    
     try:
-        # 创建ASR+AI实例
-        asr_ai = ChineseASRWithAI(ai_type)
+        # 创建ASR+AI+TTS实例
+        asr_ai_tts = ChineseASRWithAIAndTTS(ai_type, tts_type, enable_tts)
         
         # 显示使用说明
         print(f"\n📖 使用说明：")
@@ -398,7 +658,9 @@ def main():
         print("2. 🗣️ 程序会提示您开始说话")
         print("3. 🇨🇳 请说清楚的中文")
         print("4. 🤖 AI会回复您的话并显示在控制台")
-        print("5. 🔄 可以连续对话")
+        if enable_tts:
+            print("5. 🔊 AI回复会通过语音播放")
+        print("6. 🔄 可以连续对话")
         
         # 选择模式
         print(f"\n🎯 请选择模式：")
@@ -408,12 +670,12 @@ def main():
         choice = input("请输入选择（1或2）：").strip()
         
         if choice == '1':
-            asr_ai.run_conversation()
+            asr_ai_tts.run_conversation()
         elif choice == '2':
-            asr_ai.run_continuous_conversation()
+            asr_ai_tts.run_continuous_conversation()
         else:
             print("❌ 无效选择，执行单次对话")
-            asr_ai.run_conversation()
+            asr_ai_tts.run_conversation()
             
     except Exception as e:
         print(f"❌ 程序执行过程中发生错误：{e}")

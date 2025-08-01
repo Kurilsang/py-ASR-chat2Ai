@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 中文语音识别+AI对话+TTS合成演示程序
-程序启动入口 - 使用模块化架构 + 流式TTS
+程序启动入口 - 使用模块化架构 + 流式TTS + Whisper ASR
 
 项目结构：
 ├── main.py                     # 启动入口
@@ -15,7 +15,7 @@
 import time
 from utils import ConfigManager, MenuHelper, DependencyChecker
 from services import (
-    ASRService, 
+    ASRServiceFactory,
     AIServiceFactory, 
     TTSServiceFactory, 
     VoiceActivityDetector
@@ -39,15 +39,28 @@ def main():
         config_manager = ConfigManager()
         
         # 3. 用户选择服务配置
+        asr_type = MenuHelper.select_asr_service()
         ai_type = MenuHelper.select_ai_service()
         tts_type, enable_tts = MenuHelper.select_tts_service()
         
         # 4. 初始化服务
         print("\n🔧 初始化系统服务...")
         
-        # 初始化ASR服务
+        # 初始化ASR服务（新增Whisper支持）
         print("🎤 初始化语音识别服务...")
-        asr_service = ASRService(config_manager)
+        asr_service = ASRServiceFactory.create_service_with_fallback(
+            primary_type=asr_type, 
+            config_manager=config_manager, 
+            fallback_type="traditional"
+        )
+        
+        if not asr_service:
+            print("❌ ASR服务初始化失败，程序无法继续运行")
+            return
+        
+        # 显示ASR服务信息
+        if hasattr(asr_service, 'print_service_info'):
+            asr_service.print_service_info()
         
         # 初始化AI服务（带回退机制）
         print("🤖 初始化AI对话服务...")
@@ -116,6 +129,13 @@ def main():
             print("   - 智能文本分割，保持语音自然连贯")
             print("   - 支持实时进度显示和中途停止")
         
+        # 如果使用了Whisper，显示额外说明
+        if hasattr(asr_service, 'get_service_name') and 'Whisper' in asr_service.get_service_name():
+            print("\n🎤 Whisper ASR功能已启用:")
+            print("   - 高精度语音识别，支持多语言")
+            print("   - 自动语言检测和噪声抑制")
+            print("   - 更好的中文识别效果")
+        
         # 7. 服务测试（可选）
         if MenuHelper.confirm_action("是否进行服务测试"):
             conversation_manager.test_all_services()
@@ -124,6 +144,11 @@ def main():
             if enable_tts and isinstance(tts_service, StreamingTTSAdapter):
                 if MenuHelper.confirm_action("是否测试流式TTS性能"):
                     test_streaming_tts_performance(tts_service)
+            
+            # 如果使用Whisper，进行额外的Whisper测试
+            if hasattr(asr_service, 'test_recognition'):
+                if MenuHelper.confirm_action("是否测试Whisper识别功能"):
+                    asr_service.test_recognition()
         
         # 8. 选择对话模式并运行
         mode = MenuHelper.select_conversation_mode()
@@ -150,6 +175,10 @@ def main():
             # 如果使用了流式TTS，显示流式TTS统计
             if enable_tts and isinstance(tts_service, StreamingTTSAdapter):
                 tts_service.print_streaming_stats()
+            
+            # 如果使用了Whisper，显示Whisper统计
+            if hasattr(asr_service, 'print_usage_stats'):
+                asr_service.print_usage_stats()
         
         print("\n👋 程序结束，感谢使用！")
         
@@ -345,7 +374,7 @@ def show_help():
 🎙️ 中文语音识别+AI对话+TTS合成演示程序
 
 功能特性：
-- 🎤 智能语音识别 (ASR)
+- 🎤 智能语音识别 (传统ASR/Whisper ASR)
 - 🤖 多种AI对话服务 (简单AI/Ollama/OpenAI)
 - 🔊 多种语音合成 (pyttsx3/Google TTS/Azure TTS)
 - ⚡ 流式TTS技术 (边合成边播放，提升响应速度)
@@ -353,21 +382,33 @@ def show_help():
 - 🔄 连续对话支持
 - ⚙️ 灵活配置管理
 
+✨ ASR服务选择：
+- 传统ASR: 基于Google/PocketSphinx，快速启动
+- Whisper ASR: OpenAI Whisper高精度识别，支持多语言
+
 使用方法：
 1. 确保麦克风正常工作
 2. 运行程序：python main.py
-3. 按提示选择服务和模式
-4. 建议启用流式TTS以获得更好体验
-5. 开始语音对话
+3. 按提示选择ASR、AI和TTS服务
+4. 建议启用Whisper ASR获得更高识别精度
+5. 建议启用流式TTS以获得更好体验
+6. 开始语音对话
 
-🚀 流式TTS新特性：
+🎤 Whisper ASR新特性：
+- 高精度语音识别，支持中英文等多语言
+- 自动语言检测和噪声抑制
+- 支持本地模型和OpenAI API两种模式
+- 可完全离线使用（本地模式）
+
+🚀 流式TTS特性：
 - 长文本响应速度提升50-80%
 - 智能文本分割，保持语义完整性
 - 实时进度显示，支持中途停止
 - 自动回退机制，确保稳定性
 
 配置文件：config/config.ini
-依赖安装：pip install -r requirements.txt pygame
+依赖安装：pip install -r requirements.txt
+测试Whisper：python test_whisper.py
 
 项目地址：https://github.com/Kurilsang/py-ASR-chat2Ai
 """
@@ -378,7 +419,7 @@ def show_version():
     """显示版本信息"""
     version_info = """
 🎙️ 中文语音识别+AI对话+TTS合成演示程序
-版本：2.1.0 (流式TTS增强版)
+版本：2.2.0 (Whisper ASR增强版)
 作者：AI Assistant
 更新日期：2024-12-19
 
@@ -389,10 +430,21 @@ def show_version():
 - 📊 完善的统计和监控
 - 🎯 智能语音活动检测
 - 🔄 自动回退机制
-- ⚡ 新增流式TTS技术 (重大更新)
+- ⚡ 流式TTS技术 (重大更新)
 - 🚀 长对话响应速度大幅提升
 - 🧩 智能文本分割与并行处理
 - 📈 详细性能统计与监控
+- 🎤 Whisper ASR支持 (全新功能)
+- 🌍 多语言高精度语音识别
+- 🔧 ASR服务工厂和管理器
+- 🛠️ 完善的依赖检查和测试工具
+
+技术架构：
+- 模块化设计，职责分离清晰
+- 工厂模式支持多种服务类型
+- 适配器模式实现服务兼容
+- 策略模式支持算法切换
+- 单例模式确保配置统一
 """
     print(version_info)
 

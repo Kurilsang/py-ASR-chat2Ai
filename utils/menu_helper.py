@@ -14,6 +14,7 @@ class MenuHelper:
         """打印程序头部信息"""
         print("🎙️ 中文语音识别+AI对话+TTS合成演示程序")
         print("🔧 支持智能语音检测和自动连续对话")
+        print("⚡ 现已支持Whisper高精度语音识别")
         print("=" * 60)
     
     @staticmethod
@@ -27,6 +28,46 @@ class MenuHelper:
         if enable_tts:
             print("5. 🔊 AI回复会通过语音播放")
         print("6. 🔄 支持智能连续对话（无需按键）")
+    
+    @staticmethod
+    def select_asr_service() -> str:
+        """选择ASR语音识别服务"""
+        print("\n🎤 选择ASR语音识别服务：")
+        options = {
+            "1": ("传统ASR", "traditional", "基于Google/PocketSphinx，快速启动"),
+            "2": ("Whisper ASR", "whisper", "OpenAI Whisper，高精度识别")
+        }
+        
+        for key, (name, _, desc) in options.items():
+            print(f"{key}. {name} ({desc})")
+        
+        choice = input("请选择（1或2）：").strip()
+        
+        if choice in options:
+            name, asr_type, _ = options[choice]
+            print(f"\n💡 选择了{name}")
+            
+            if choice == "2":
+                MenuHelper._show_whisper_guide()
+                
+            return asr_type
+        else:
+            print("❌ 无效选择，默认使用传统ASR")
+            return "traditional"
+    
+    @staticmethod
+    def _show_whisper_guide():
+        """显示Whisper使用指南"""
+        print("\n📋 Whisper ASR使用说明：")
+        print("1. 本地模式: pip install openai-whisper")
+        print("   - 自动下载模型（首次使用需要时间）")
+        print("   - 支持CPU和GPU加速")
+        print("   - 可离线使用")
+        print("2. API模式: 需要OpenAI API Key")
+        print("   - 在config.ini中配置api_key")
+        print("   - 或设置环境变量OPENAI_API_KEY")
+        print("💡 如果Whisper不可用会自动回退到传统ASR")
+        print("⚡ 推荐使用base模型平衡速度和精度")
     
     @staticmethod
     def select_ai_service() -> str:

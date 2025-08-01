@@ -1,12 +1,15 @@
 """
 对话管理器 - 核心业务层
 协调ASR、AI、TTS、VAD等服务完成完整的对话流程
+支持聊天记录的数据库存储功能
 """
 
 import time
+import uuid
 from typing import Optional
 from utils.config_manager import ConfigManager
 from utils.menu_helper import MenuHelper
+from utils.database_manager import DatabaseManager
 from services.asr_service import ASRService
 from services.ai_service import AIServiceWithFallback
 from services.tts_service import TTSServiceInterface
@@ -21,7 +24,8 @@ class ConversationManager:
                  asr_service: ASRService,
                  ai_service: AIServiceWithFallback,
                  tts_service: Optional[TTSServiceInterface] = None,
-                 vad_service: Optional[VoiceActivityDetector] = None):
+                 vad_service: Optional[VoiceActivityDetector] = None,
+                 user_id: str = "default"):
         """
         初始化对话管理器
         
@@ -31,12 +35,35 @@ class ConversationManager:
             ai_service: AI对话服务
             tts_service: TTS语音合成服务（可选）
             vad_service: VAD语音活动检测服务（可选）
+            user_id: 用户ID
         """
         self.config = config_manager
         self.asr_service = asr_service
         self.ai_service = ai_service
         self.tts_service = tts_service
         self.vad_service = vad_service
+        self.user_id = user_id
+        
+        # 初始化数据库管理器
+        self.db_manager = None
+        self.current_session_id = None
+        self.enable_database = config_manager.get_bool('MONGODB_SETTINGS', 'enable_database', True)
+        
+        if self.enable_database:
+            try:
+                self.db_manager = DatabaseManager(config_manager)
+                if self.db_manager.is_connected():
+                    # 创建新会话
+                    self.current_session_id = self.db_manager.create_session(self.user_id)
+                    print("💾 数据库存储已启用")
+                else:
+                    print("⚠️ 数据库连接失败，聊天记录将不会被保存")
+                    self.enable_database = False
+            except Exception as e:
+                print(f"⚠️ 数据库初始化失败: {e}")
+                self.enable_database = False
+        else:
+            print("💾 数据库存储已禁用")
         
         # 对话统计
         self.conversation_count = 0
@@ -75,7 +102,10 @@ class ConversationManager:
             # 步骤4：显示AI回复
             print(f"🤖 AI回复：{ai_response}")
             
-            # 步骤5：TTS语音播放
+            # 步骤5：保存聊天记录到数据库
+            self._save_chat_record(user_input, ai_response)
+            
+            # 步骤6：TTS语音播放
             if self.tts_service:
                 self._play_tts_response(ai_response)
             
@@ -88,6 +118,103 @@ class ConversationManager:
         except Exception as e:
             print(f"❌ 对话过程中发生错误：{e}")
             return False
+    
+    def _save_chat_record(self, user_message: str, ai_response: str):
+        """
+        保存聊天记录到数据库
+        
+        Args:
+            user_message: 用户消息
+            ai_response: AI回复
+        """
+        if not self.enable_database or not self.db_manager or not self.current_session_id:
+            return
+        
+        try:
+            # 获取服务名称
+            asr_service_name = self.asr_service.get_service_name() if hasattr(self.asr_service, 'get_service_name') else 'unknown'
+            ai_service_name = self.ai_service.get_current_service_name() if hasattr(self.ai_service, 'get_current_service_name') else 'unknown'
+            tts_service_name = self.tts_service.get_service_name() if self.tts_service and hasattr(self.tts_service, 'get_service_name') else 'none'
+            
+            # 构建元数据
+            metadata = {
+                'recognition_time': getattr(self, '_last_recognition_time', 0),
+                'ai_response_time': getattr(self, '_last_ai_response_time', 0),
+                'tts_time': getattr(self, '_last_tts_time', 0),
+                'conversation_round': self.conversation_count + 1
+            }
+            
+            # 保存到数据库
+            success = self.db_manager.save_chat_record(
+                user_message=user_message,
+                ai_response=ai_response,
+                session_id=self.current_session_id,
+                user_id=self.user_id,
+                asr_service=asr_service_name,
+                ai_service=ai_service_name,
+                tts_service=tts_service_name,
+                metadata=metadata
+            )
+            
+            if success:
+                # 更新会话统计
+                self.db_manager.update_session(
+                    self.current_session_id,
+                    message_count=self.conversation_count + 1,
+                    last_activity=self.db_manager._database.client.server_info()['localTime'] if self.db_manager._database else None
+                )
+            
+        except Exception as e:
+            print(f"⚠️ 保存聊天记录失败: {e}")
+    
+    def get_chat_history(self, limit: int = 10) -> list:
+        """
+        获取当前会话的聊天历史
+        
+        Args:
+            limit: 返回记录数限制
+            
+        Returns:
+            聊天记录列表
+        """
+        if not self.enable_database or not self.db_manager or not self.current_session_id:
+            return []
+        
+        try:
+            return self.db_manager.get_chat_history(
+                session_id=self.current_session_id,
+                limit=limit
+            )
+        except Exception as e:
+            print(f"⚠️ 获取聊天历史失败: {e}")
+            return []
+    
+    def print_chat_history(self, limit: int = 5):
+        """
+        打印聊天历史记录
+        
+        Args:
+            limit: 显示记录数限制
+        """
+        history = self.get_chat_history(limit)
+        
+        if not history:
+            print("📝 暂无聊天历史记录")
+            return
+        
+        print(f"\n📜 最近 {len(history)} 条聊天记录:")
+        print("=" * 60)
+        
+        for i, record in enumerate(reversed(history), 1):
+            timestamp = record.get('timestamp', 'unknown')
+            user_msg = record.get('user_message', '')
+            ai_msg = record.get('ai_response', '')
+            
+            print(f"\n{i}. 时间: {timestamp}")
+            print(f"   👤 用户: {user_msg}")
+            print(f"   🤖 AI: {ai_msg}")
+        
+        print("=" * 60)
     
     def run_smart_continuous_conversation(self) -> dict:
         """

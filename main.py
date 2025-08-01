@@ -111,12 +111,17 @@ def main():
         
         # 5. 创建对话管理器
         print("🎯 初始化对话管理器...")
+        
+        # 生成或获取用户ID
+        user_id = config_manager.get_string('USER_SETTINGS', 'user_id', 'default')
+        
         conversation_manager = ConversationManager(
             config_manager=config_manager,
             asr_service=asr_service,
             ai_service=ai_service,
             tts_service=tts_service,
-            vad_service=vad_service
+            vad_service=vad_service,
+            user_id=user_id
         )
         
         # 6. 显示使用说明
@@ -135,6 +140,14 @@ def main():
             print("   - 高精度语音识别，支持多语言")
             print("   - 自动语言检测和噪声抑制")
             print("   - 更好的中文识别效果")
+        
+        # 如果启用了数据库，显示数据库信息
+        if conversation_manager.enable_database and conversation_manager.db_manager:
+            print("\n💾 MongoDB数据库功能已启用:")
+            print("   - 聊天记录将自动保存到数据库")
+            print("   - 支持聊天历史查询和统计")
+            print("   - 会话管理和用户数据分析")
+            conversation_manager.db_manager.print_database_info()
         
         # 7. 服务测试（可选）
         if MenuHelper.confirm_action("是否进行服务测试"):
@@ -179,6 +192,37 @@ def main():
             # 如果使用了Whisper，显示Whisper统计
             if hasattr(asr_service, 'print_usage_stats'):
                 asr_service.print_usage_stats()
+            
+            # 如果启用了数据库，显示数据库统计和聊天历史
+            if conversation_manager.enable_database and conversation_manager.db_manager:
+                # 显示数据库统计
+                db_stats = conversation_manager.db_manager.get_database_stats()
+                print(f"\n💾 数据库使用统计:")
+                print(f"   总操作数: {db_stats.get('total_operations', 0)}")
+                print(f"   成功操作: {db_stats.get('successful_operations', 0)}")
+                
+                if 'collections' in db_stats:
+                    print(f"   聊天记录: {db_stats['collections'].get('chat_records', 0)} 条")
+                    print(f"   用户数: {db_stats['collections'].get('users', 0)} 个")
+                    print(f"   会话数: {db_stats['collections'].get('sessions', 0)} 个")
+                
+                # 询问是否显示聊天历史
+                if MenuHelper.confirm_action("是否查看本次会话的聊天历史"):
+                    conversation_manager.print_chat_history(10)
+                
+                # 询问是否显示用户统计
+                if MenuHelper.confirm_action("是否查看用户统计信息"):
+                    user_stats = conversation_manager.db_manager.get_user_stats(user_id)
+                    if user_stats:
+                        print(f"\n👤 用户统计信息 (ID: {user_id}):")
+                        print(f"   总消息数: {user_stats.get('total_messages', 0)}")
+                        print(f"   总会话数: {user_stats.get('total_sessions', 0)}")
+                        first_msg = user_stats.get('first_message')
+                        last_msg = user_stats.get('last_message')
+                        if first_msg:
+                            print(f"   首次使用: {first_msg}")
+                        if last_msg:
+                            print(f"   最近使用: {last_msg}")
         
         print("\n👋 程序结束，感谢使用！")
         
@@ -380,19 +424,27 @@ def show_help():
 - ⚡ 流式TTS技术 (边合成边播放，提升响应速度)
 - 🎯 智能语音活动检测 (VAD)
 - 🔄 连续对话支持
+- 💾 MongoDB数据库存储 (聊天记录持久化)
 - ⚙️ 灵活配置管理
 
 ✨ ASR服务选择：
 - 传统ASR: 基于Google/PocketSphinx，快速启动
 - Whisper ASR: OpenAI Whisper高精度识别，支持多语言
 
+💾 数据库功能：
+- 自动保存所有聊天记录
+- 会话管理和用户统计
+- 聊天历史查询和分析
+- 支持数据导出和备份
+
 使用方法：
 1. 确保麦克风正常工作
-2. 运行程序：python main.py
-3. 按提示选择ASR、AI和TTS服务
-4. 建议启用Whisper ASR获得更高识别精度
-5. 建议启用流式TTS以获得更好体验
-6. 开始语音对话
+2. 安装MongoDB并启动服务 (可选)
+3. 运行程序：python main.py
+4. 按提示选择ASR、AI和TTS服务
+5. 建议启用Whisper ASR获得更高识别精度
+6. 建议启用流式TTS以获得更好体验
+7. 开始语音对话
 
 🎤 Whisper ASR新特性：
 - 高精度语音识别，支持中英文等多语言
@@ -406,9 +458,15 @@ def show_help():
 - 实时进度显示，支持中途停止
 - 自动回退机制，确保稳定性
 
-配置文件：config/config.ini
+💾 数据库管理：
+- 配置文件：config/config.ini
+- 初始化脚本：python config/database_init.py
+- 功能测试：python test_mongodb.py
+- 数据库名称：py-asr-chat2ai
+
 依赖安装：pip install -r requirements.txt
 测试Whisper：python test_whisper.py
+测试数据库：python test_mongodb.py
 
 项目地址：https://github.com/Kurilsang/py-ASR-chat2Ai
 """
@@ -419,7 +477,7 @@ def show_version():
     """显示版本信息"""
     version_info = """
 🎙️ 中文语音识别+AI对话+TTS合成演示程序
-版本：2.2.0 (Whisper ASR增强版)
+版本：2.3.0 (MongoDB数据库增强版)
 作者：AI Assistant
 更新日期：2024-12-19
 
@@ -438,6 +496,10 @@ def show_version():
 - 🌍 多语言高精度语音识别
 - 🔧 ASR服务工厂和管理器
 - 🛠️ 完善的依赖检查和测试工具
+- 💾 MongoDB数据库集成 (最新功能)
+- 📝 聊天记录持久化存储
+- 📊 用户统计和会话管理
+- 🔍 聊天历史查询和分析
 
 技术架构：
 - 模块化设计，职责分离清晰
@@ -445,6 +507,15 @@ def show_version():
 - 适配器模式实现服务兼容
 - 策略模式支持算法切换
 - 单例模式确保配置统一
+- MongoDB数据库持久化存储
+- 完整的错误处理和日志系统
+
+数据库特性：
+- 自动连接管理和重连机制
+- 聊天记录结构化存储
+- 索引优化提升查询性能
+- 用户会话跟踪和统计
+- 数据清理和归档功能
 """
     print(version_info)
 
